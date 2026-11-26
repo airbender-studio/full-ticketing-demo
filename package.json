@@ -8,7 +8,7 @@
     "demo": "./scripts/dev.sh",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
-    "setup": "./scripts/seed.sh && npm --prefix web install",
+    "setup": "./scripts/setup.sh",
     "dev:api": "npm --prefix api run dev",
     "dev:web": "npm --prefix web run dev",
     "test": "npm --prefix api test",
