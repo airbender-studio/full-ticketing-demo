@@ -82,6 +82,52 @@ async function activateClientApi(page: Page, slug: "bluebox" | "harbor") {
   console.log(`[demo-e2e] activated ${slug} via API`);
 }
 
+/** Drag an MUI Slider thumb visibly left/right, then linger. */
+async function dragSlider(page: Page, testId: string, dx: number) {
+  const root = page.getByTestId(testId);
+  await expect(root).toBeVisible({ timeout: 8_000 });
+  await root.scrollIntoViewIfNeeded();
+  const thumb = root.locator(".MuiSlider-thumb, [role='slider']").first();
+  const box = await thumb.boundingBox();
+  if (!box) {
+    // Fallback: click along the rail
+    const rail = root.locator(".MuiSlider-rail, .MuiSlider-track").first();
+    const r = await rail.boundingBox();
+    if (!r) return;
+    await page.mouse.click(r.x + r.width * (dx > 0 ? 0.75 : 0.25), r.y + r.height / 2);
+    await linger(page, Math.max(900, pace));
+    return;
+  }
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + dx, y, { steps: 18 });
+  await page.mouse.up();
+  await linger(page, Math.max(1000, pace));
+}
+
+/** Play the visualizer toggles/sliders so rate-limit / chaos / hold feel alive. */
+async function playVisualizerSliders(page: Page) {
+  console.log("[demo-e2e] visualizer slider play");
+  await page.getByText("Integration toggles").scrollIntoViewIfNeeded();
+  await linger(page, pace);
+
+  // Nudge rate limit down, then up
+  await dragSlider(page, "slider-rate-limit", -90);
+  await dragSlider(page, "slider-rate-limit", 110);
+
+  // Bump ERP chaos up a bit (retry story), then ease back
+  await dragSlider(page, "slider-erp-chaos", 70);
+  await linger(page, Math.max(1200, pace * 1.2));
+  await dragSlider(page, "slider-erp-chaos", -50);
+
+  // Seat lock window + warn threshold
+  await dragSlider(page, "slider-hold-seconds", 80);
+  await dragSlider(page, "slider-hold-warn", -40);
+  await linger(page, Math.max(1400, pace * 1.3));
+}
+
 /**
  * Grab-drag orbit on canvas (yaw+pitch), zoom in/out, reverse home.
  * Falls back to __demoCameraTour if canvas missing.
@@ -159,34 +205,47 @@ async function purchaseWithPhoneTicket(page: Page) {
   await scrollToBottom(page, { steps: 4, bottomLingerMs: Math.max(1800, pace * 1.5) });
 }
 
-function mappingLingerMs(mult = 5) {
-  return Math.max(5500, Math.floor(pace * mult));
+/** Mapping showcase — hard ~7–8s floor (or 5–6× DEMO_PACE_MS). Never flash. */
+function mappingLingerMs(mult = 6) {
+  return Math.max(7500, Math.floor(pace * mult));
 }
 
 async function showMapping(page: Page, which: "harbor" | "bluebox") {
-  console.log(`[demo-e2e] mapping → ${which}`);
+  console.log(`[demo-e2e] mapping linger → ${which}`);
   await gotoLocal(page, `${BASE}/customers/${which}/mapping`);
   await expect(page.getByTestId("mapping-page")).toBeVisible({ timeout: 12_000 });
-  await linger(page, mappingLingerMs(4));
+  await expect(page.getByRole("heading", { name: /Payload mapping/i })).toBeVisible();
+  await linger(page, mappingLingerMs(6));
 
   await page.getByTestId("mapping-flow").scrollIntoViewIfNeeded();
-  await linger(page, mappingLingerMs(3.5));
+  await linger(page, mappingLingerMs(5));
 
   await page.getByTestId("mapping-recipe").scrollIntoViewIfNeeded();
-  await linger(page, mappingLingerMs(4));
+  await linger(page, mappingLingerMs(5.5));
 
   for (const id of ["mapping-json-before", "mapping-json-after"] as const) {
     const body = page.getByTestId(`${id}-body`);
     if (!(await body.isVisible().catch(() => false))) {
       await page.getByTestId(`${id}-toggle`).click();
-      await beat(page, Math.max(400, pace * 0.5));
+      await beat(page, Math.max(500, pace));
     }
     await expect(page.getByTestId(`${id}-body`)).toBeVisible();
     await page.getByTestId(id).scrollIntoViewIfNeeded();
-    await linger(page, mappingLingerMs(4.5));
+    await page.evaluate((tid) => {
+      const el = document.querySelector(`[data-testid="${tid}-body"]`);
+      if (el) el.scrollTop = 0;
+    }, id);
+    await linger(page, mappingLingerMs(6));
+    await page.evaluate((tid) => {
+      const el = document.querySelector(`[data-testid="${tid}-body"]`);
+      if (el) el.scrollTop = el.scrollHeight;
+    }, id);
+    await linger(page, mappingLingerMs(5));
   }
 
-  await scrollToBottom(page, { steps: 8, bottomLingerMs: mappingLingerMs(5) });
+  await scrollToBottom(page, { steps: 10, bottomLingerMs: mappingLingerMs(6) });
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+  await linger(page, mappingLingerMs(5));
 }
 
 test.describe.configure({ mode: "serial" });
@@ -240,7 +299,7 @@ test("paced visual walkthrough: seats → ticket → ERP → customers → swagg
   await cameraTour(page, 4000);
   await linger(page, pace * 0.8);
 
-  // ── 3. Visualizer — scroll to bottom ────────────────────────────
+  // ── 3. Visualizer — drag sliders, then scroll to bottom ─────────
   await gotoLocal(page, `${BASE}/visualizer`);
   await expect(page.getByRole("heading", { name: "API Visualizer" })).toBeVisible({
     timeout: 10_000,
@@ -253,6 +312,9 @@ test("paced visual walkthrough: seats → ticket → ERP → customers → swagg
     .first()
     .waitFor({ state: "visible", timeout: 10_000 })
     .catch(() => null);
+
+  await playVisualizerSliders(page);
+
   await scrollToBottom(page, { steps: 8, bottomLingerMs: Math.max(3000, pace * 2.5) });
 
   // ── 4. Customers — activate Harbor via API, profiles, mapping ───
