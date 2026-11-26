@@ -13,7 +13,8 @@
     "dev:web": "npm --prefix web run dev",
     "test": "npm --prefix api test",
     "e2e": "npm --prefix e2e run demo",
-    "e2e:headless": "npm --prefix e2e run demo:headless"
+    "e2e:headless": "npm --prefix e2e run demo:headless",
+    "start-demo": "./scripts/start-demo.sh"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

@@ -13,13 +13,19 @@ Full-stack ticketing storefront with seat maps, checkout holds, HMAC webhooks, a
 
 ## Quick start
 
+One shot (seed + start stack + headed Playwright):
+
+```bash
+npm run start-demo
+```
+
+Or step by step:
+
 ```bash
 ./scripts/setup.sh   # once: Postgres + migrate + seed + install deps/Chromium
 ./scripts/dev.sh     # start API :4000 + web :5173
 npm run e2e          # headed Playwright walkthrough
 ```
-
-Same via npm: `npm run setup` · `npm run dev` · `npm run e2e`
 
 | Service | URL |
 | --- | --- |
