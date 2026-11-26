@@ -1,0 +1,21 @@
+{
+  "name": "full-ticketing-demo",
+  "private": true,
+  "description": "Seat maps → checkout → HMAC webhook → async ERP sync (Bluebox / Harbor)",
+  "scripts": {
+    "seed": "./scripts/seed.sh",
+    "dev": "./scripts/dev.sh",
+    "demo": "./scripts/dev.sh",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "setup": "./scripts/seed.sh && npm --prefix web install",
+    "dev:api": "npm --prefix api run dev",
+    "dev:web": "npm --prefix web run dev",
+    "test": "npm --prefix api test",
+    "e2e": "npm --prefix e2e run demo",
+    "e2e:headless": "npm --prefix e2e run demo:headless"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

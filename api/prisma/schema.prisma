@@ -1,0 +1,125 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Venue {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  city        String
+  capacity    Int
+  description String
+  accent      String   @default("#1565C0")
+  rows        Int
+  cols        Int
+  events      Event[]
+  createdAt   DateTime @default(now())
+}
+
+model Event {
+  id        String   @id @default(cuid())
+  venueId   String
+  venue     Venue    @relation(fields: [venueId], references: [id])
+  title     String
+  startsAt  DateTime
+  priceCents Int
+  seats     Seat[]
+  createdAt DateTime @default(now())
+}
+
+model Seat {
+  id         String      @id @default(cuid())
+  eventId    String
+  event      Event       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  label      String
+  row        Int
+  col        Int
+  section    String
+  status     SeatStatus  @default(AVAILABLE)
+  holdUntil  DateTime?
+  orderId    String?
+  order      Order?      @relation(fields: [orderId], references: [id])
+  createdAt  DateTime    @default(now())
+
+  @@unique([eventId, label])
+  @@index([eventId, status])
+}
+
+enum SeatStatus {
+  AVAILABLE
+  HELD
+  SOLD
+}
+
+model Order {
+  id            String        @id @default(cuid())
+  eventId       String
+  email         String
+  totalCents    Int
+  currency      String        @default("USD")
+  status        OrderStatus   @default(PENDING)
+  paymentStatus PaymentStatus @default(PENDING)
+  seats         Seat[]
+  webhookInbox  WebhookInbox[]
+  erpSyncs      ErpSync[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+}
+
+enum OrderStatus {
+  PENDING
+  COMPLETE
+  CANCELED
+}
+
+enum PaymentStatus {
+  PENDING
+  RECEIVED
+  REFUNDED
+}
+
+model WebhookInbox {
+  id          String   @id
+  type        String
+  orderId     String?
+  order       Order?   @relation(fields: [orderId], references: [id])
+  payload     Json
+  status      String   @default("queued")
+  createdAt   DateTime @default(now())
+  processedAt DateTime?
+}
+
+model ErpSync {
+  id              String   @id @default(cuid())
+  orderId         String
+  order           Order    @relation(fields: [orderId], references: [id])
+  action          String
+  idempotencyKey  String   @unique
+  status          String
+  erpExternalId   String?
+  attempts        Int      @default(0)
+  lastError       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model IntegrationConfig {
+  id    Int  @id @default(1)
+  value Json
+}
+
+model ApiEventLog {
+  id        String   @id @default(cuid())
+  kind      String
+  level     String   @default("info")
+  message   String
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

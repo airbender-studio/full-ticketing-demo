@@ -1,0 +1,13 @@
+{
+  "name": "ticketing-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "playwright test demo.spec.ts --headed --workers=1",
+    "demo:headless": "playwright test demo.spec.ts --workers=1",
+    "install:browsers": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.51.0"
+  }
+}
