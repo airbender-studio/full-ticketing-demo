@@ -12,6 +12,9 @@ export function enqueueErp(orderId: string) {
   // Vitest sets VITEST=true — skip async ERP side effects that race DB teardown
   if (process.env.VITEST) return;
   queue.push(orderId);
+  void emit("erp_queue", `Enqueued ERP sync · depth ${queue.length}`, {
+    meta: { orderId, depth: queue.length },
+  });
   void pump();
 }
 
@@ -47,6 +50,10 @@ export async function syncOrder(orderId: string) {
 
   const action = "invoice";
   const idempotencyKey = `order:${order.id}:${action}`;
+
+  await emit("erp_attempt", `ERP worker attempt · ${orderId.slice(-8)}`, {
+    meta: { orderId, idempotencyKey },
+  });
 
   if (toggles.rateLimitEnabled) {
     const token = takeToken("erp", toggles.rateLimitPerMinute);

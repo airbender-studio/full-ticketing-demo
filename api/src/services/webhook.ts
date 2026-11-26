@@ -25,6 +25,7 @@ export async function handleWebhook(raw: Buffer, signature: string | undefined) 
       await emit("webhook_reject", "HMAC verification failed", { level: "error" });
       return { status: 401, body: { error: "invalid signature" } };
     }
+    await emit("hmac_ok", "HMAC verified", { level: "success" });
   }
 
   let event: Incoming;

@@ -44,17 +44,17 @@ async function linger(page: Page, ms = pace * 2) {
   await beat(page, ms);
 }
 
-/** Wait for Three.js map + demo camera helper, then run orbit→zoom-in→zoom-out→home. */
+/** Wait for Three.js map + demo camera helper, then orbit+tilt+zoom → home. */
 async function cameraTour(page: Page, durationMs = 3400) {
   await expect(page.getByTestId("seat-canvas")).toBeVisible({ timeout: 20_000 });
   await page.waitForFunction(() => typeof window.__demoCameraTour === "function", null, {
     timeout: 15_000,
   });
-  await beat(page, Math.floor(pace * 0.6));
+  await beat(page, Math.floor(pace * 0.5));
   await page.evaluate(async (ms) => {
     await window.__demoCameraTour?.({ durationMs: ms });
   }, durationMs);
-  await beat(page, Math.floor(pace * 0.5));
+  await beat(page, Math.floor(pace * 0.4));
 }
 
 async function openVenue(page: Page, slug: string, heading: RegExp) {
@@ -65,16 +65,79 @@ async function openVenue(page: Page, slug: string, heading: RegExp) {
 }
 
 async function switchClient(page: Page, label: RegExp) {
-  // MUI Select — click the visible combobox (data-testid on Select, not hidden input).
   await page.getByTestId("client-switch").click();
   await page.getByRole("option", { name: label }).click();
+}
+
+/** Select seats → hold → checkout → phone ticket (must visibly succeed). */
+async function purchaseWithPhoneTicket(page: Page) {
+  console.log("[demo-e2e] quick-pick seats…");
+  await page.getByTestId("email").fill("patron@example.com");
+
+  const checkoutWait = page.waitForResponse(
+    (r) => r.url().includes("/api/orders/checkout") && r.request().method() === "POST",
+    { timeout: 30_000 }
+  );
+
+  await page.getByTestId("quick-pick").click();
+
+  // Hold is debounced ~350ms — wait until timer + Buy enabled
+  await expect(page.getByTestId("hold-timer")).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId("hold-countdown")).toBeVisible();
+  await expect(page.getByTestId("buy")).toBeEnabled({ timeout: 15_000 });
+  console.log("[demo-e2e] hold locked — clicking Buy");
+  await linger(page, pace * 1.2);
+
+  await page.getByTestId("buy").click();
+
+  const checkoutRes = await checkoutWait;
+  const status = checkoutRes.status();
+  const bodyText = await checkoutRes.text().catch(() => "");
+  console.log(`[demo-e2e] checkout → ${status} ${bodyText.slice(0, 180)}`);
+  if (status >= 400) {
+    throw new Error(`Checkout failed (${status}): ${bodyText}`);
+  }
+
+  const phone = page.getByTestId("ticket-phone");
+  await phone.scrollIntoViewIfNeeded();
+  await expect(phone).toBeVisible({ timeout: 25_000 });
+  await expect(page.getByText(/Ticket delivery preview/i)).toBeVisible();
+  console.log("[demo-e2e] phone ticket preview visible ✓");
+  await linger(page, pace * 2.5);
+}
+
+async function showMapping(page: Page, which: "harbor" | "bluebox") {
+  await gotoLocal(page, `${BASE}/customers/${which}/mapping`);
+  await expect(page.getByTestId("mapping-page")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: /Payload mapping/i })).toBeVisible();
+  await linger(page, pace * 1.2);
+
+  await page.getByTestId("mapping-flow").scrollIntoViewIfNeeded();
+  await linger(page, pace);
+
+  await page.getByTestId("mapping-recipe").scrollIntoViewIfNeeded();
+  await linger(page, pace * 1.2);
+
+  // Ensure JSON panels are expanded and readable
+  for (const id of ["mapping-json-before", "mapping-json-after"] as const) {
+    const body = page.getByTestId(`${id}-body`);
+    if (!(await body.isVisible().catch(() => false))) {
+      await page.getByTestId(`${id}-toggle`).click();
+    }
+    await expect(page.getByTestId(`${id}-body`)).toBeVisible();
+    await page.getByTestId(id).scrollIntoViewIfNeeded();
+    await linger(page, pace * 1.4);
+  }
+
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await linger(page, pace * 2);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await linger(page, pace);
 }
 
 test.describe.configure({ mode: "serial" });
 
 test.beforeEach(async ({ page, context }) => {
-  // Hard guard: abort any document navigation off localhost:5173 / :4000.
-  // Prevents Google NTP/omnibox/search (e.g. google.com/search?q=L) from hijacking the demo.
   await context.route("**/*", async (route) => {
     const req = route.request();
     if (req.resourceType() === "document") {
@@ -108,74 +171,56 @@ test("paced visual walkthrough: seats → ticket → ERP → customers → swagg
   await expect(page.getByRole("link", { name: /View seat map/i })).toHaveCount(3);
   await linger(page, pace * 1.5);
 
-  // Ensure Bluebox skin for the purchase beat
   await switchClient(page, /Bluebox Arts/i);
   await expect(page.getByRole("link", { name: /Bluebox Arts/i }).first()).toBeVisible();
   await beat(page);
 
-  // ── 2. Studio venue: camera tour → pick seats → checkout → phone ticket ──
+  // ── 2. Studio: brief map → seats → hold → checkout → phone ticket ──
+  // Camera tour AFTER purchase so the hold clock isn't racing the showcase spin.
   await openVenue(page, "studio-100", /Bluebox Studio/i);
   await linger(page, pace);
+  await purchaseWithPhoneTicket(page);
   await cameraTour(page, 3600);
-
-  // Visible seat selection (quick-pick lifts two available seats + chips)
-  await page.getByTestId("quick-pick").click();
-  await expect(page.getByTestId("hold-timer")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByTestId("hold-countdown")).toBeVisible();
-  await linger(page, pace * 1.4);
-
-  await page.getByTestId("buy").click();
-  await expect(page.getByTestId("ticket-phone")).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByText(/Ticket delivery preview/i)).toBeVisible();
-  await linger(page, pace * 2);
+  await linger(page, pace);
 
   // ── 3. ERP / retry side — visualizer ────────────────────────────
   await page.getByRole("link", { name: "API Visualizer" }).click();
   await expect(page).toHaveURL(/localhost:5173\/visualizer/);
   await expect(page.getByRole("heading", { name: "API Visualizer" })).toBeVisible();
   await expect(page.getByText(/ERP synced|Queue depth|Integration toggles/i).first()).toBeVisible();
-  await linger(page, pace);
+  await linger(page, pace * 1.5);
 
-  // Surface rate-limit / idempotency / chaos story
   await expect(page.getByText("ERP rate limit")).toBeVisible();
   await expect(page.getByText("Idempotency")).toBeVisible();
   await page.getByText("ERP fail chaos", { exact: false }).scrollIntoViewIfNeeded();
-  await linger(page, pace);
+  await linger(page, pace * 1.2);
 
-  // Event stream should show pipeline after the sale
   await expect(
-    page.getByText(/erp_sync|order_complete|hold|checkout|webhook/i).first()
+    page.getByText(/erp_sync|order_complete|hold|checkout|webhook|hmac/i).first()
   ).toBeVisible({ timeout: 15_000 });
   await page.locator(".log-row").first().scrollIntoViewIfNeeded().catch(() => {});
-  await linger(page, pace * 2.2);
+  await linger(page, pace * 2.5);
 
-  // ── 4. Customer profiles + mapping gloss ────────────────────────
+  // ── 4. Customer profiles + mapping gloss (linger hard) ──────────
   await page.getByRole("link", { name: "Customers" }).click();
   await expect(page).toHaveURL(/localhost:5173\/customers/);
   await expect(page.getByRole("heading", { name: /Customer profiles/i })).toBeVisible();
   await expect(page.getByTestId("customer-bluebox")).toBeVisible();
   await expect(page.getByTestId("customer-harbor")).toBeVisible();
-  await linger(page, pace * 1.2);
+  await linger(page, pace * 1.5);
 
-  // Activate Harbor — branding should flip
   await page.getByTestId("customer-harbor").getByRole("button", { name: /Activate/i }).click();
   await expect(page.getByRole("link", { name: /Harbor Live/i }).first()).toBeVisible();
   await linger(page, pace * 1.2);
 
   await page.getByTestId("customer-harbor").getByRole("link", { name: "Profile" }).click();
   await expect(page.getByRole("heading", { name: /Harbor Live/i })).toBeVisible();
-  await expect(page.getByText(/Pain points|How their API works/i).first()).toBeVisible();
   await linger(page, pace * 1.5);
 
-  await page.getByRole("link", { name: /Open JSON mapping|JSON mapping/i }).first().click();
-  await expect(page.getByRole("heading", { name: /Payload mapping/i })).toBeVisible();
-  await expect(page.getByText(/Canonical|Mapped|Recipe/i).first()).toBeVisible();
-  await linger(page, pace * 1.5);
-
-  // Bluebox clean recipe for contrast
-  await page.getByRole("link", { name: /Bluebox \(clean\)/i }).click();
+  // Harbor legacy + Bluebox clean — expand JSON, scroll, linger hard
+  await showMapping(page, "harbor");
+  await showMapping(page, "bluebox");
   await expect(page.getByText(/Clean recipe/i)).toBeVisible();
-  await linger(page, pace * 1.2);
 
   await page.getByRole("link", { name: "Customers" }).click();
   await page
@@ -187,7 +232,7 @@ test("paced visual walkthrough: seats → ticket → ERP → customers → swagg
   await expect(page.getByRole("heading", { name: /Bluebox/i })).toBeVisible();
   await linger(page, pace);
 
-  // ── 5. Remaining venues — camera tour on each ───────────────────
+  // ── 5. Remaining venues — camera tour (orbit + tilt + zoom) ─────
   await openVenue(page, "hall-500", /Riverfront Hall/i);
   await linger(page, pace * 0.8);
   await cameraTour(page, 3400);
@@ -196,26 +241,28 @@ test("paced visual walkthrough: seats → ticket → ERP → customers → swagg
   await linger(page, pace * 0.8);
   await cameraTour(page, 3600);
 
-  // ── 6. Swagger / API docs — linger + scroll so endpoints show ───
+  // ── 6. Swagger — scroll to bottom, linger longer ────────────────
   await gotoLocal(page, `${API}/docs`);
   await expect(page).toHaveURL(/http:\/\/localhost:4000\/docs\/?/);
   await expect(
     page.locator(".swagger-ui, #swagger-ui, .information-container").first()
   ).toBeVisible({ timeout: 20_000 });
-  await linger(page, pace * 1.5);
+  await linger(page, pace * 2);
 
-  // Expand a few operations so the API surface is readable
   const op = page.locator(".opblock").first();
   if (await op.count()) {
     await op.click();
     await beat(page, pace);
   }
-  await page.evaluate(() => window.scrollBy(0, 480));
-  await linger(page, pace * 1.2);
-  await page.evaluate(() => window.scrollBy(0, 480));
+  // Step down the page so endpoints are readable, then hard scroll to bottom
+  await page.evaluate(() => window.scrollBy(0, 600));
   await linger(page, pace * 1.5);
+  await page.evaluate(() => window.scrollBy(0, 600));
+  await linger(page, pace * 1.5);
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await linger(page, pace * 3);
 
-  // Optional quick branding + ticket pages
+  // Optional branding + static ticket page
   await gotoLocal(page, `${BASE}/branding`);
   await expect(page.getByTestId("client-card-bluebox")).toBeVisible();
   await expect(page.getByTestId("client-card-harbor")).toBeVisible();
@@ -223,10 +270,10 @@ test("paced visual walkthrough: seats → ticket → ERP → customers → swagg
 
   await gotoLocal(page, `${BASE}/ticket`);
   await expect(page.getByTestId("ticket-phone")).toBeVisible({ timeout: 10_000 });
-  await linger(page, pace * 1.2);
+  await linger(page, pace * 1.5);
 
-  // Back to storefront — final linger so the browser doesn't slam shut
+  // Final linger — don't slam the browser shut
   await gotoLocal(page, `${BASE}/`);
   await expect(page.getByRole("link", { name: /View seat map/i }).first()).toBeVisible();
-  await linger(page, Math.max(pace * 3, 2500));
+  await linger(page, Math.max(pace * 3.5, 3000));
 });

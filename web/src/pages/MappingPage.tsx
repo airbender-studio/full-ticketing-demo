@@ -5,6 +5,8 @@ import {
   Button,
   Chip,
   CircularProgress,
+  Collapse,
+  IconButton,
   Stack,
   Table,
   TableBody,
@@ -13,6 +15,8 @@ import {
   TableRow,
   Typography,
 } from "@mui/material";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import { api, type MappingRecipe } from "../api/client";
 
 type Preview = {
@@ -22,24 +26,68 @@ type Preview = {
   mapped: unknown;
 };
 
-function JsonBlock({ title, value }: { title: string; value: unknown }) {
+function JsonPanel({
+  title,
+  subtitle,
+  value,
+  testId,
+  defaultOpen = true,
+}: {
+  title: string;
+  subtitle?: string;
+  value: unknown;
+  testId: string;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <Box className="glass" sx={{ p: 2, borderRadius: 3, overflow: "auto", maxHeight: 420 }}>
-      <Typography variant="subtitle2" gutterBottom>
-        {title}
-      </Typography>
-      <Box
-        component="pre"
-        sx={{
-          m: 0,
-          fontSize: 12,
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
-        }}
+    <Box
+      className="glass"
+      data-testid={testId}
+      sx={{ borderRadius: 3, overflow: "hidden" }}
+    >
+      <Stack
+        direction="row"
+        alignItems="center"
+        justifyContent="space-between"
+        sx={{ px: 2, py: 1.25, cursor: "pointer" }}
+        onClick={() => setOpen((o) => !o)}
+        data-testid={`${testId}-toggle`}
       >
-        {JSON.stringify(value, null, 2)}
-      </Box>
+        <Box>
+          <Typography variant="subtitle2">{title}</Typography>
+          {subtitle && (
+            <Typography variant="caption" color="text.secondary">
+              {subtitle}
+            </Typography>
+          )}
+        </Box>
+        <IconButton size="small" aria-label={open ? "Collapse" : "Expand"}>
+          {open ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+        </IconButton>
+      </Stack>
+      <Collapse in={open}>
+        <Box
+          component="pre"
+          data-testid={`${testId}-body`}
+          sx={{
+            m: 0,
+            px: 2,
+            pb: 2,
+            maxHeight: 440,
+            overflow: "auto",
+            fontSize: 12,
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            borderTop: "1px solid",
+            borderColor: "divider",
+            pt: 1.5,
+          }}
+        >
+          {JSON.stringify(value, null, 2)}
+        </Box>
+      </Collapse>
     </Box>
   );
 }
@@ -61,23 +109,27 @@ export function MappingPage() {
   }
 
   const { client, recipe, canonical, mapped } = preview;
+  const clean = client.style === "clean";
 
   return (
-    <Stack spacing={3}>
+    <Stack spacing={3} data-testid="mapping-page">
       <Box>
         <Stack direction="row" spacing={1} mb={1.5} flexWrap="wrap" useFlexGap>
           <Chip label={client.name} />
           <Chip
-            color={client.style === "clean" ? "success" : "warning"}
-            label={client.style === "clean" ? "Clean recipe" : "Legacy recipe"}
+            color={clean ? "success" : "warning"}
+            label={clean ? "Clean recipe" : "Legacy recipe"}
           />
+          <Chip variant="outlined" label="payload_config gloss" />
         </Stack>
         <Typography variant="h3" gutterBottom>
           Payload mapping
         </Typography>
-        <Typography color="text.secondary" maxWidth={640}>
-          Gloss for the demo: canonical sale → {recipe.label}. Same idea as config-driven{" "}
-          <code>payload_config</code> — no hardcoded client forks in the worker.
+        <Typography color="text.secondary" maxWidth={680}>
+          Same SOS-style idea: one canonical sale, per-client{" "}
+          <code>payload_config</code> recipe — field paths + transforms + statics —
+          no hardcoded forks in the ERP worker. Bluebox maps clean; Harbor needs the
+          messy legacy shape.
         </Typography>
       </Box>
 
@@ -87,6 +139,7 @@ export function MappingPage() {
           to="/customers/bluebox/mapping"
           variant={slug === "bluebox" ? "contained" : "outlined"}
           size="small"
+          data-testid="mapping-tab-bluebox"
         >
           Bluebox (clean)
         </Button>
@@ -95,14 +148,63 @@ export function MappingPage() {
           to="/customers/harbor/mapping"
           variant={slug === "harbor" ? "contained" : "outlined"}
           size="small"
+          data-testid="mapping-tab-harbor"
         >
           Harbor (legacy)
         </Button>
       </Stack>
 
-      <Box className="glass" sx={{ p: 2, borderRadius: 3, overflow: "auto" }}>
+      {/* Flow strip — before → recipe → after */}
+      <Box
+        className="glass"
+        data-testid="mapping-flow"
+        sx={{
+          p: 2.5,
+          borderRadius: 3,
+          display: "grid",
+          gap: 1.5,
+          gridTemplateColumns: { xs: "1fr", md: "1fr auto 1fr auto 1fr" },
+          alignItems: "center",
+        }}
+      >
+        <Box>
+          <Typography variant="overline" color="text.secondary">
+            Incoming
+          </Typography>
+          <Typography fontWeight={700}>Canonical sale</Typography>
+          <Typography variant="body2" color="text.secondary">
+            vivenu-shaped DTO after checkout
+          </Typography>
+        </Box>
+        <Typography color="primary.main" sx={{ display: { xs: "none", md: "block" } }}>
+          →
+        </Typography>
+        <Box>
+          <Typography variant="overline" color="text.secondary">
+            Recipe
+          </Typography>
+          <Typography fontWeight={700}>{recipe.label}</Typography>
+          <Typography variant="body2" color="text.secondary">
+            {recipe.fields.length} fields · {recipe.static.length} static
+          </Typography>
+        </Box>
+        <Typography color="primary.main" sx={{ display: { xs: "none", md: "block" } }}>
+          →
+        </Typography>
+        <Box>
+          <Typography variant="overline" color="text.secondary">
+            Outgoing
+          </Typography>
+          <Typography fontWeight={700}>{client.label}</Typography>
+          <Typography variant="body2" color="text.secondary">
+            {clean ? "Modern finance JSON" : "Legacy Batch.Txn shape"}
+          </Typography>
+        </Box>
+      </Box>
+
+      <Box className="glass" sx={{ p: 2, borderRadius: 3, overflow: "auto" }} data-testid="mapping-recipe">
         <Typography variant="subtitle2" gutterBottom>
-          Recipe
+          Recipe steps (source → target)
         </Typography>
         <Table size="small">
           <TableHead>
@@ -121,7 +223,9 @@ export function MappingPage() {
                 <TableCell>
                   <code>{f.target}</code>
                 </TableCell>
-                <TableCell>{f.transform ?? "—"}</TableCell>
+                <TableCell>
+                  {f.transform ? <Chip size="small" label={f.transform} /> : "—"}
+                </TableCell>
               </TableRow>
             ))}
             {recipe.static.map((s) => (
@@ -141,6 +245,11 @@ export function MappingPage() {
         </Table>
       </Box>
 
+      <Typography variant="h6">JSON transformation</Typography>
+      <Typography color="text.secondary" sx={{ mt: -1 }}>
+        Expand either panel — same sample sale, two destination shapes.
+      </Typography>
+
       <Box
         sx={{
           display: "grid",
@@ -148,8 +257,20 @@ export function MappingPage() {
           gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
         }}
       >
-        <JsonBlock title="Canonical (vivenu-shaped)" value={canonical} />
-        <JsonBlock title={`Mapped → ${client.label}`} value={mapped} />
+        <JsonPanel
+          title="Before — canonical (vivenu-shaped)"
+          subtitle="Sample incoming sale payload"
+          value={canonical}
+          testId="mapping-json-before"
+          defaultOpen
+        />
+        <JsonPanel
+          title={`After — mapped → ${client.label}`}
+          subtitle={clean ? "Clean modern ERP body" : "Legacy nested Batch.Txn"}
+          value={mapped}
+          testId="mapping-json-after"
+          defaultOpen
+        />
       </Box>
 
       <Button component={RouterLink} to={`/customers/${slug}`} variant="text">

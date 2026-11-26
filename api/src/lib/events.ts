@@ -1,4 +1,5 @@
 import { prisma } from "./prisma.js";
+import { pipelineLog } from "./pipelineLog.js";
 
 type Listener = (event: LiveEvent) => void;
 
@@ -42,6 +43,7 @@ export async function emit(
     createdAt: row.createdAt.toISOString(),
   };
 
+  pipelineLog(kind, message, level, event.meta);
   for (const fn of listeners) fn(event);
   return event;
 }

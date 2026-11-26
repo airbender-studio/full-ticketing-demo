@@ -380,6 +380,8 @@ function HouseControls({ layout }: { layout: SeatLayout }) {
   const [spin, setSpin] = useState(stadium);
   const minAz = stadium ? -Math.PI * 0.42 : -Math.PI * 0.55;
   const maxAz = stadium ? Math.PI * 0.42 : Math.PI * 0.55;
+  const minPol = Math.PI * 0.18;
+  const maxPol = Math.PI * 0.48;
   const minDist = layout === "grid" ? 9 : 14;
   const maxDist = layout === "grid" ? 28 : 38;
 
@@ -402,7 +404,7 @@ function HouseControls({ layout }: { layout: SeatLayout }) {
     };
   }, [stadium]);
 
-  // Showcase helper: partial orbit, dolly in, dolly out, land on original pose.
+  // Showcase helper: orbit + pitch tilt + dolly in/out, land on original pose.
   useEffect(() => {
     let cancel = false;
     let raf = 0;
@@ -426,6 +428,9 @@ function HouseControls({ layout }: { layout: SeatLayout }) {
         const startDist = ctrl.getDistance();
         const azSwing = Math.min(0.55, (maxAz - minAz) * 0.45);
         const peakAz = Math.max(minAz, Math.min(maxAz, startAz + azSwing));
+        // Tilt toward a lower/higher pitch (not yaw-only)
+        const polDelta = Math.min(0.16, (maxPol - minPol) * 0.35);
+        const peakPol = Math.max(minPol, Math.min(maxPol, startPol - polDelta));
         const closeDist = Math.max(minDist + 0.2, startDist * 0.62);
         const duration = Math.max(1800, opts?.durationMs ?? 3400);
         const t0 = performance.now();
@@ -446,23 +451,27 @@ function HouseControls({ layout }: { layout: SeatLayout }) {
             return;
           }
           const u = Math.min(1, (now - t0) / duration);
-          // 0–0.45 orbit+zoom-in · 0.45–0.7 hold · 0.7–1 reverse to start
+          // 0–0.45 orbit+tilt+zoom-in · 0.45–0.7 hold · 0.7–1 reverse to start
           let az = startAz;
+          let pol = startPol;
           let dist = startDist;
           if (u < 0.45) {
             const p = easeInOut(u / 0.45);
             az = startAz + (peakAz - startAz) * p;
+            pol = startPol + (peakPol - startPol) * p;
             dist = startDist + (closeDist - startDist) * p;
           } else if (u < 0.7) {
             az = peakAz;
+            pol = peakPol;
             dist = closeDist;
           } else {
             const p = easeInOut((u - 0.7) / 0.3);
             az = peakAz + (startAz - peakAz) * p;
+            pol = peakPol + (startPol - peakPol) * p;
             dist = closeDist + (startDist - closeDist) * p;
           }
 
-          applySpherical(az, startPol, dist);
+          applySpherical(az, pol, dist);
 
           if (u < 1) {
             raf = requestAnimationFrame(frame);
@@ -484,7 +493,7 @@ function HouseControls({ layout }: { layout: SeatLayout }) {
       cancelAnimationFrame(raf);
       delete window.__demoCameraTour;
     };
-  }, [layout, minAz, maxAz, minDist, maxDist, stadium]);
+  }, [layout, minAz, maxAz, minPol, maxPol, minDist, maxDist, stadium]);
 
   return (
     <OrbitControls
@@ -498,8 +507,8 @@ function HouseControls({ layout }: { layout: SeatLayout }) {
       zoomSpeed={0.45}
       target={layout === "grid" ? [0, 0.2, 1.2] : [0, 0.7, 3.2]}
       // Stay above the floor — no flip under the house
-      minPolarAngle={Math.PI * 0.18}
-      maxPolarAngle={Math.PI * 0.48}
+      minPolarAngle={minPol}
+      maxPolarAngle={maxPol}
       // Stay in the house / don’t swing behind the stage
       minAzimuthAngle={minAz}
       maxAzimuthAngle={maxAz}
