@@ -2,13 +2,13 @@
 import crypto from "crypto";
 import express from "express";
 
-interface Incoming {
+interface VivenuWebhookEvent {
   id: string;
   type: string;
   data: { id: string };
 }
 
-interface Outgoing {
+interface ErpInvoice {
   externalId: string;
   amountCents: number;
   currency: string;
@@ -27,7 +27,7 @@ app.post("/webhooks/vivenu", express.raw({ type: "application/json" }), async (r
   // Reject requests with a missing or invalid signature.
   if (!sig || sig !== expected) return res.status(401).end();
 
-  const body = JSON.parse(raw.toString()) as Incoming;
+  const body = JSON.parse(raw.toString()) as VivenuWebhookEvent;
   const { id: webhookId, type, data } = body;
   const orderId = data?.id || "";
 
@@ -42,7 +42,7 @@ app.post("/webhooks/vivenu", express.raw({ type: "application/json" }), async (r
   return res.status(202).json({ status: "accepted" });
 });
 
-async function worker(job: { orderId: string; type: string }) {
+async function syncOrder(job: { orderId: string; type: string }) {
   const key = "order:" + job.orderId + ":invoice";
 
   // Idempotency key prevents duplicate ERP writes.
@@ -55,7 +55,7 @@ async function worker(job: { orderId: string; type: string }) {
   const order = await fetchOrder(job.orderId);
   const { id, realPrice, currency, customer } = order || {};
 
-  const payload: Outgoing = {
+  const payload: ErpInvoice = {
     externalId: id || job.orderId,
     amountCents: Math.round((realPrice || 0) * 100),
     currency: currency || "USD",
@@ -76,6 +76,6 @@ async function waitForRateLimit() {}
 async function fetchOrder(id: string) {
   return { id, realPrice: 0, currency: "USD", customer: { email: "" } };
 }
-async function postErp(payload: Outgoing, key: string) {}
+async function postErp(payload: ErpInvoice, key: string) {}
 
-export { app, worker };
+export { app, syncOrder };

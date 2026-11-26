@@ -317,20 +317,61 @@ export function VenuePage() {
         </Button>
       </Stack>
 
-      {msg && <Alert severity="success">{msg}</Alert>}
-      {err && <Alert severity="error">{err}</Alert>}
-
-      {ticket && (
-        <Box>
-          <Typography variant="h5" gutterBottom>
-            Ticket delivery preview
-          </Typography>
-          <Typography color="text.secondary" mb={2}>
-            No email provider wired — this is the phone wallet view patrons would get.
-          </Typography>
-          <TicketPhone ticket={ticket} />
-        </Box>
+      {msg && (
+        <Alert severity="success" data-testid="checkout-success">
+          {msg}
+        </Alert>
       )}
+      {err && <Alert severity="error" data-testid="checkout-error">{err}</Alert>}
+
+      <Dialog
+        open={Boolean(ticket)}
+        onClose={() => setTicket(null)}
+        maxWidth="xs"
+        fullWidth
+        data-testid="ticket-preview"
+        PaperProps={{
+          sx: {
+            maxHeight: "92vh",
+            m: 1.5,
+          },
+        }}
+      >
+        <DialogTitle sx={{ pb: 0.5 }}>Tickets ready</DialogTitle>
+        <DialogContent
+          sx={{
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            pt: 1,
+            pb: 0,
+          }}
+        >
+          <Typography color="text.secondary" mb={1} textAlign="center" fontSize={14}>
+            Phone wallet preview — what the patron sees after checkout.
+          </Typography>
+          {/* Scale phone to fit modal frame (layout box matches visual size) */}
+          <Box
+            sx={{
+              width: 320 * 0.72,
+              height: 680 * 0.72,
+              display: "flex",
+              justifyContent: "center",
+              overflow: "hidden",
+            }}
+          >
+            <Box sx={{ transform: "scale(0.72)", transformOrigin: "top center" }}>
+              {ticket && <TicketPhone ticket={ticket} />}
+            </Box>
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ pt: 0.5 }}>
+          <Button onClick={() => setTicket(null)} data-testid="ticket-dismiss">
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={warnOpen} onClose={() => { setWarnOpen(false); setWarnAck(true); }}>
         <DialogTitle>Hurry — {formatRemain(remainingMs)} left</DialogTitle>

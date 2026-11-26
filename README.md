@@ -72,13 +72,45 @@ cd api && npm test
 
 Covers HMAC, rate limits, hold sessions, HTTP IDOR/security, hold→checkout, mapping engine.
 
-## Playwright demo
+## Playwright automation
+
+Headed walkthrough that demos the product end-to-end (not a minimal smoke test).
+
+**What it does**
+
+1. Activates Bluebox, opens **Harbor Arena** first  
+2. Camera tour: orbit far right + strong tilt + **3× zoom** (same timing) → 1s pause → reverse home (no jump)  
+3. Selects seats → hold → checkout → **phone ticket modal** (lingers, then closes) — **only checkout in the run**  
+4. API Visualizer: choreographs all sliders together, then restores start values  
+5. Customer profiles + mapping pages (before/after JSON), Harbor + Bluebox  
+6. Studio + Hall: brief left→right camera peek only (no checkout)  
+7. Swagger docs, branding, ticket sample — smooth scroll to the lower third on info pages  
+
+Stays on **localhost** only (bundled Chromium; does not use system Chrome / Google).
+
+**Run**
 
 ```bash
-# api + web already running
-cd e2e && npm install && npx playwright install chromium
-DEMO_PACE_MS=1600 npm run demo
+# terminals: API + web already up (./scripts/dev.sh)
+cd demo   # or repo root of full-ticketing-demo
+npm run e2e
+# same as:
+# DEMO_PACE_MS=1000 npm --prefix e2e run demo
 ```
+
+First time:
+
+```bash
+cd e2e && npm install && npx playwright install chromium
+```
+
+| Env | Meaning |
+| --- | --- |
+| `DEMO_PACE_MS` | Base linger between beats (default in scripts ~1000). Higher = slower showcase. |
+| Headed | `npm run e2e` → `--headed --workers=1` |
+| Headless | `npm run e2e:headless` |
+
+Spec: `e2e/demo.spec.ts`. Camera helpers live on `window.__demoCameraTour` / `__demoCameraPeek` in the seat map.
 
 ## Admin surfaces
 

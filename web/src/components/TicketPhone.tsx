@@ -52,7 +52,7 @@ export function TicketPhone({ ticket }: { ticket: TicketPreview }) {
   const seatLine = ticket.seats.map((s) => s.label).join(" · ");
 
   return (
-    <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+    <Box sx={{ display: "flex", justifyContent: "center", py: 0 }}>
       {/* Device shell */}
       <Box
         data-testid="ticket-phone"
@@ -77,7 +77,7 @@ export function TicketPhone({ ticket }: { ticket: TicketPreview }) {
             borderRadius: "34px",
             overflow: "hidden",
             bgcolor: "#07090f",
-            minHeight: 640,
+            minHeight: 600,
             position: "relative",
             backgroundImage: `
               radial-gradient(ellipse at 20% 0%, ${branding.primary}55, transparent 55%),

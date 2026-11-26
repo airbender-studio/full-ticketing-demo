@@ -306,8 +306,10 @@ export function layoutForSlug(slug: string): SeatLayout {
 
 declare global {
   interface Window {
-    /** Playwright / showcase: orbit + dolly in/out, then restore start pose. */
+    /** Arena showcase: yaw far right + strong tilt → pause → reverse (no zoom). */
     __demoCameraTour?: (opts?: { durationMs?: number }) => Promise<void>;
+    /** Brief left then right peek with light tilt (other venues). */
+    __demoCameraPeek?: (opts?: { durationMs?: number }) => Promise<void>;
   }
 }
 
@@ -404,94 +406,195 @@ function HouseControls({ layout }: { layout: SeatLayout }) {
     };
   }, [stadium]);
 
-  // Showcase helper: orbit + pitch tilt + dolly in/out, land on original pose.
+  /**
+   * Arena showcase: far RIGHT + strong tilt + zoom 3× (same timing) → pause → reverse home.
+   * Brief peek: left then right once with light tilt (other venues, no zoom).
+   */
   useEffect(() => {
     let cancel = false;
     let raf = 0;
 
-    window.__demoCameraTour = (opts) =>
-      new Promise((resolve) => {
+    type Step = { az: number; pol: number; dist: number; holdMs?: number; moveMs: number };
+
+    const runSphericalTour = (
+      resolve: () => void,
+      plan: Step[],
+      startAz: number,
+      startPol: number,
+      startDist: number,
+      startTarget: THREE.Vector3,
+      ctrl: OrbitControlsImpl,
+    ) => {
+      const offset = new THREE.Vector3();
+      const spherical = new THREE.Spherical();
+      const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+      const apply = (az: number, pol: number, dist: number) => {
+        spherical.set(dist, pol, az);
+        offset.setFromSpherical(spherical);
+        ctrl.object.position.copy(startTarget).add(offset);
+        ctrl.target.copy(startTarget);
+        ctrl.update();
+      };
+
+      type Seg =
+        | {
+            kind: "move";
+            fromAz: number;
+            fromPol: number;
+            fromDist: number;
+            toAz: number;
+            toPol: number;
+            toDist: number;
+            ms: number;
+          }
+        | { kind: "hold"; az: number; pol: number; dist: number; ms: number };
+
+      const segs: Seg[] = [];
+      let curAz = startAz;
+      let curPol = startPol;
+      let curDist = startDist;
+      for (const step of plan) {
+        segs.push({
+          kind: "move",
+          fromAz: curAz,
+          fromPol: curPol,
+          fromDist: curDist,
+          toAz: step.az,
+          toPol: step.pol,
+          toDist: step.dist,
+          ms: step.moveMs,
+        });
+        if (step.holdMs && step.holdMs > 0) {
+          segs.push({
+            kind: "hold",
+            az: step.az,
+            pol: step.pol,
+            dist: step.dist,
+            ms: step.holdMs,
+          });
+        }
+        curAz = step.az;
+        curPol = step.pol;
+        curDist = step.dist;
+      }
+      // Smooth home — same duration as last outbound move (no snap)
+      segs.push({
+        kind: "move",
+        fromAz: curAz,
+        fromPol: curPol,
+        fromDist: curDist,
+        toAz: startAz,
+        toPol: startPol,
+        toDist: startDist,
+        ms: plan[plan.length - 1]?.moveMs ?? 1200,
+      });
+
+      const t0 = performance.now();
+      let segStart = 0;
+      let segIdx = 0;
+
+      const finish = () => {
+        // Already at start pose from last lerp — don't hard-copy (that causes a jump)
+        apply(startAz, startPol, startDist);
+        ctrl.enableDamping = true;
+        ctrl.update();
+        if (stadium) setSpin(true);
+        resolve();
+      };
+
+      const frame = (now: number) => {
+        if (cancel) {
+          resolve();
+          return;
+        }
+        if (segIdx >= segs.length) {
+          finish();
+          return;
+        }
+        const seg = segs[segIdx];
+        const local = now - t0 - segStart;
+        if (seg.kind === "hold") {
+          apply(seg.az, seg.pol, seg.dist);
+          if (local >= seg.ms) {
+            segStart += seg.ms;
+            segIdx += 1;
+          }
+        } else {
+          const p = easeInOut(Math.min(1, local / Math.max(1, seg.ms)));
+          apply(
+            lerp(seg.fromAz, seg.toAz, p),
+            lerp(seg.fromPol, seg.toPol, p),
+            lerp(seg.fromDist, seg.toDist, p),
+          );
+          if (local >= seg.ms) {
+            segStart += seg.ms;
+            segIdx += 1;
+          }
+        }
+        raf = requestAnimationFrame(frame);
+      };
+      raf = requestAnimationFrame(frame);
+    };
+
+    const begin = (buildPlan: (s: {
+      startAz: number;
+      startPol: number;
+      startDist: number;
+    }) => Step[]) =>
+      new Promise<void>((resolve) => {
         const ctrl = ref.current;
         if (!ctrl) {
           resolve();
           return;
         }
-
         setSpin(false);
         ctrl.autoRotate = false;
         ctrl.enableDamping = false;
-
-        const startPos = ctrl.object.position.clone();
         const startTarget = ctrl.target.clone();
         const startAz = ctrl.getAzimuthalAngle();
         const startPol = ctrl.getPolarAngle();
         const startDist = ctrl.getDistance();
-        const azSwing = Math.min(0.55, (maxAz - minAz) * 0.45);
-        const peakAz = Math.max(minAz, Math.min(maxAz, startAz + azSwing));
-        // Tilt toward a lower/higher pitch (not yaw-only)
-        const polDelta = Math.min(0.16, (maxPol - minPol) * 0.35);
-        const peakPol = Math.max(minPol, Math.min(maxPol, startPol - polDelta));
-        const closeDist = Math.max(minDist + 0.2, startDist * 0.62);
-        const duration = Math.max(1800, opts?.durationMs ?? 3400);
-        const t0 = performance.now();
-        const offset = new THREE.Vector3();
-        const spherical = new THREE.Spherical();
-
-        const applySpherical = (az: number, pol: number, dist: number) => {
-          spherical.set(dist, pol, az);
-          offset.setFromSpherical(spherical);
-          ctrl.object.position.copy(startTarget).add(offset);
-          ctrl.target.copy(startTarget);
-          ctrl.update();
-        };
-
-        const frame = (now: number) => {
-          if (cancel) {
-            resolve();
-            return;
-          }
-          const u = Math.min(1, (now - t0) / duration);
-          // 0–0.45 orbit+tilt+zoom-in · 0.45–0.7 hold · 0.7–1 reverse to start
-          let az = startAz;
-          let pol = startPol;
-          let dist = startDist;
-          if (u < 0.45) {
-            const p = easeInOut(u / 0.45);
-            az = startAz + (peakAz - startAz) * p;
-            pol = startPol + (peakPol - startPol) * p;
-            dist = startDist + (closeDist - startDist) * p;
-          } else if (u < 0.7) {
-            az = peakAz;
-            pol = peakPol;
-            dist = closeDist;
-          } else {
-            const p = easeInOut((u - 0.7) / 0.3);
-            az = peakAz + (startAz - peakAz) * p;
-            pol = peakPol + (startPol - peakPol) * p;
-            dist = closeDist + (startDist - closeDist) * p;
-          }
-
-          applySpherical(az, pol, dist);
-
-          if (u < 1) {
-            raf = requestAnimationFrame(frame);
-          } else {
-            ctrl.object.position.copy(startPos);
-            ctrl.target.copy(startTarget);
-            ctrl.enableDamping = true;
-            ctrl.update();
-            if (stadium) setSpin(true);
-            resolve();
-          }
-        };
-
-        raf = requestAnimationFrame(frame);
+        runSphericalTour(
+          resolve,
+          buildPlan({ startAz, startPol, startDist }),
+          startAz,
+          startPol,
+          startDist,
+          startTarget,
+          ctrl,
+        );
       });
+
+    window.__demoCameraTour = (opts) => {
+      const moveMs = Math.max(3500, Math.floor((opts?.durationMs ?? 8000) * 0.45));
+      return begin(({ startAz, startPol, startDist }) => [
+        {
+          az: maxAz,
+          pol: Math.min(1.45, startPol + 1.1),
+          // 3× zoom in = one-third distance, same timing as tilt
+          dist: Math.max(minDist * 0.85, startDist / 3),
+          holdMs: 1000,
+          moveMs,
+        },
+      ]);
+    };
+
+    window.__demoCameraPeek = (opts) => {
+      const moveMs = Math.max(900, Math.floor((opts?.durationMs ?? 3200) / 4));
+      return begin(({ startAz, startPol, startDist }) => {
+        const tilt = Math.min(1.35, startPol + 0.55);
+        return [
+          { az: minAz, pol: tilt, dist: startDist, holdMs: 280, moveMs },
+          { az: maxAz, pol: tilt, dist: startDist, holdMs: 280, moveMs },
+        ];
+      });
+    };
 
     return () => {
       cancel = true;
       cancelAnimationFrame(raf);
       delete window.__demoCameraTour;
+      delete window.__demoCameraPeek;
     };
   }, [layout, minAz, maxAz, minPol, maxPol, minDist, maxDist, stadium]);
 

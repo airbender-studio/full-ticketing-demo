@@ -62,6 +62,7 @@ export function Shell() {
             to="/"
             variant="h6"
             color="text.primary"
+            data-testid="brand-name"
             sx={{ fontWeight: 750, letterSpacing: "-0.03em", mr: { md: 2 } }}
           >
             {branding.brandName}
@@ -100,10 +101,18 @@ export function Shell() {
             value={activeSlug}
             onChange={(e) => void switchClient(e.target.value)}
             sx={{ minWidth: 160 }}
-            inputProps={{ "data-testid": "client-switch" }}
+            // Visible Select (combobox) — not inputProps (hidden native input hangs Playwright).
+            slotProps={{ select: { "data-testid": "client-switch" } }}
           >
             {clients.map((c) => (
-              <MenuItem key={c.slug} value={c.slug}>
+              <MenuItem
+                key={c.slug}
+                value={c.slug}
+                // Explicit click — Select onChange alone is flaky under Playwright headed.
+                onClick={() => {
+                  if (c.slug !== activeSlug) void switchClient(c.slug);
+                }}
+              >
                 {c.name}
               </MenuItem>
             ))}
