@@ -8,6 +8,33 @@ const pace = Number(
   process.env.DEMO_PACE_MS ?? (process.env.HEADED === "0" ? 0 : 1000)
 );
 
+function isAllowedUrl(url: string) {
+  try {
+    const u = new URL(url);
+    if (u.protocol === "about:" || u.protocol === "data:" || u.protocol === "blob:") return true;
+    if (u.hostname !== "localhost" && u.hostname !== "127.0.0.1") return false;
+    return u.port === "5173" || u.port === "4000" || u.port === "";
+  } catch {
+    return false;
+  }
+}
+
+/** Navigate only to localhost demo hosts; fail fast if anything else wins. */
+async function gotoLocal(page: Page, url: string) {
+  if (!isAllowedUrl(url)) {
+    throw new Error(`Refusing navigation outside localhost demo hosts: ${url}`);
+  }
+  const res = await page.goto(url, { waitUntil: "domcontentloaded" });
+  const finalUrl = page.url();
+  if (!isAllowedUrl(finalUrl)) {
+    throw new Error(`Landed off-localhost after goto(${url}): ${finalUrl}`);
+  }
+  if (res && res.status() >= 400) {
+    throw new Error(`Bad status ${res.status()} for ${url}`);
+  }
+  return res;
+}
+
 async function beat(page: Page, ms = pace) {
   const wait = pace > 0 ? Math.max(ms, Math.floor(pace * 0.8)) : 0;
   if (wait > 0) await page.waitForTimeout(wait);
@@ -31,7 +58,7 @@ async function cameraTour(page: Page, durationMs = 3400) {
 }
 
 async function openVenue(page: Page, slug: string, heading: RegExp) {
-  await page.goto(`${BASE}/venues/${slug}`, { waitUntil: "domcontentloaded" });
+  await gotoLocal(page, `${BASE}/venues/${slug}`);
   await expect(page.getByRole("heading", { name: heading })).toBeVisible({ timeout: 20_000 });
   await expect(page.getByTestId("seat-canvas")).toBeVisible({ timeout: 20_000 });
   await expect(page.getByTestId("quick-pick")).toBeVisible({ timeout: 15_000 });
@@ -45,12 +72,37 @@ async function switchClient(page: Page, label: RegExp) {
 
 test.describe.configure({ mode: "serial" });
 
+test.beforeEach(async ({ page, context }) => {
+  // Hard guard: abort any document navigation off localhost:5173 / :4000.
+  // Prevents Google NTP/omnibox/search (e.g. google.com/search?q=L) from hijacking the demo.
+  await context.route("**/*", async (route) => {
+    const req = route.request();
+    if (req.resourceType() === "document") {
+      const url = req.url();
+      if (!isAllowedUrl(url)) {
+        console.error(`[demo-e2e] blocked off-localhost navigation: ${url}`);
+        await route.abort("blockedbyclient");
+        return;
+      }
+    }
+    await route.continue();
+  });
+
+  page.on("framenavigated", (frame) => {
+    if (frame !== page.mainFrame()) return;
+    const url = frame.url();
+    if (url && url !== "about:blank" && !isAllowedUrl(url)) {
+      throw new Error(`[demo-e2e] main frame left localhost: ${url}`);
+    }
+  });
+});
+
 test("paced visual walkthrough: seats → ticket → ERP → customers → swagger", async ({
   page,
 }) => {
   // ── 1. Storefront ──────────────────────────────────────────────
-  await page.goto(`${BASE}/`, { waitUntil: "domcontentloaded" });
-  await expect(page).toHaveURL(/localhost:5173/);
+  await gotoLocal(page, `${BASE}/`);
+  await expect(page).toHaveURL(/http:\/\/localhost:5173\/?$/);
   await expect(page.getByTestId("client-switch")).toBeVisible({ timeout: 20_000 });
   await expect(page.getByRole("heading", { level: 2 })).toContainText(/Bluebox|Harbor/i);
   await expect(page.getByRole("link", { name: /View seat map/i })).toHaveCount(3);
@@ -79,6 +131,7 @@ test("paced visual walkthrough: seats → ticket → ERP → customers → swagg
 
   // ── 3. ERP / retry side — visualizer ────────────────────────────
   await page.getByRole("link", { name: "API Visualizer" }).click();
+  await expect(page).toHaveURL(/localhost:5173\/visualizer/);
   await expect(page.getByRole("heading", { name: "API Visualizer" })).toBeVisible();
   await expect(page.getByText(/ERP synced|Queue depth|Integration toggles/i).first()).toBeVisible();
   await linger(page, pace);
@@ -98,6 +151,7 @@ test("paced visual walkthrough: seats → ticket → ERP → customers → swagg
 
   // ── 4. Customer profiles + mapping gloss ────────────────────────
   await page.getByRole("link", { name: "Customers" }).click();
+  await expect(page).toHaveURL(/localhost:5173\/customers/);
   await expect(page.getByRole("heading", { name: /Customer profiles/i })).toBeVisible();
   await expect(page.getByTestId("customer-bluebox")).toBeVisible();
   await expect(page.getByTestId("customer-harbor")).toBeVisible();
@@ -124,7 +178,10 @@ test("paced visual walkthrough: seats → ticket → ERP → customers → swagg
   await linger(page, pace * 1.2);
 
   await page.getByRole("link", { name: "Customers" }).click();
-  await page.getByTestId("customer-bluebox").getByRole("button", { name: /Activate|Active skin/i }).click();
+  await page
+    .getByTestId("customer-bluebox")
+    .getByRole("button", { name: /Activate|Active skin/i })
+    .click();
   await expect(page.getByRole("link", { name: /Bluebox Arts/i }).first()).toBeVisible();
   await page.getByTestId("customer-bluebox").getByRole("link", { name: "Profile" }).click();
   await expect(page.getByRole("heading", { name: /Bluebox/i })).toBeVisible();
@@ -140,11 +197,11 @@ test("paced visual walkthrough: seats → ticket → ERP → customers → swagg
   await cameraTour(page, 3600);
 
   // ── 6. Swagger / API docs — linger + scroll so endpoints show ───
-  await page.goto(`${API}/docs`, { waitUntil: "domcontentloaded" });
-  await expect(page).toHaveURL(/localhost:4000\/docs/);
-  await expect(page.locator(".swagger-ui, #swagger-ui, .information-container").first()).toBeVisible({
-    timeout: 20_000,
-  });
+  await gotoLocal(page, `${API}/docs`);
+  await expect(page).toHaveURL(/http:\/\/localhost:4000\/docs\/?/);
+  await expect(
+    page.locator(".swagger-ui, #swagger-ui, .information-container").first()
+  ).toBeVisible({ timeout: 20_000 });
   await linger(page, pace * 1.5);
 
   // Expand a few operations so the API surface is readable
@@ -159,17 +216,17 @@ test("paced visual walkthrough: seats → ticket → ERP → customers → swagg
   await linger(page, pace * 1.5);
 
   // Optional quick branding + ticket pages
-  await page.goto(`${BASE}/branding`, { waitUntil: "domcontentloaded" });
+  await gotoLocal(page, `${BASE}/branding`);
   await expect(page.getByTestId("client-card-bluebox")).toBeVisible();
   await expect(page.getByTestId("client-card-harbor")).toBeVisible();
   await linger(page, pace);
 
-  await page.goto(`${BASE}/ticket`, { waitUntil: "domcontentloaded" });
+  await gotoLocal(page, `${BASE}/ticket`);
   await expect(page.getByTestId("ticket-phone")).toBeVisible({ timeout: 10_000 });
   await linger(page, pace * 1.2);
 
   // Back to storefront — final linger so the browser doesn't slam shut
-  await page.goto(`${BASE}/`, { waitUntil: "domcontentloaded" });
+  await gotoLocal(page, `${BASE}/`);
   await expect(page.getByRole("link", { name: /View seat map/i }).first()).toBeVisible();
   await linger(page, Math.max(pace * 3, 2500));
 });
