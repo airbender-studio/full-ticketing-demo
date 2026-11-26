@@ -1,4 +1,4 @@
-// Task 2 — cleaned webhook pattern (whiteboard sketch)
+// Task 2 reference: HMAC verification, async enqueue, idempotent ERP writes.
 import crypto from "crypto";
 import express from "express";
 
@@ -17,27 +17,27 @@ interface Outgoing {
 
 const app = express();
 
-// raw body — HMAC needs the exact bytes vivenu signed
+// Verify HMAC against the raw request body (not a re-serialized object).
 app.post("/webhooks/vivenu", express.raw({ type: "application/json" }), async (req, res) => {
   const raw = req.body;
   const sig = req.header("x-vivenu-signature") || "";
   const secret = process.env.WEBHOOK_SECRET || "";
   const expected = crypto.createHmac("sha256", secret).update(raw).digest("hex");
 
-  // reject forgeries
+  // Reject requests with a missing or invalid signature.
   if (!sig || sig !== expected) return res.status(401).end();
 
   const body = JSON.parse(raw.toString()) as Incoming;
   const { id: webhookId, type, data } = body;
   const orderId = data?.id || "";
 
-  // base checks only
+  // Require webhook id and order id before processing.
   if (!webhookId || !orderId) return res.status(400).end();
 
-  // claim once — duplicates just ack
+  // Deduplicate delivery: prior claims return 200 without re-enqueue.
   if (await alreadyClaimed(webhookId)) return res.status(200).json({ status: "duplicate" });
 
-  // enqueue then 202 — don't ERP in the request (vivenu times out)
+  // Return 202 after enqueue so the HTTP path stays non-blocking.
   await enqueue({ orderId, type: type || "transaction.complete" });
   return res.status(202).json({ status: "accepted" });
 });
@@ -45,13 +45,13 @@ app.post("/webhooks/vivenu", express.raw({ type: "application/json" }), async (r
 async function worker(job: { orderId: string; type: string }) {
   const key = "order:" + job.orderId + ":invoice";
 
-  // idempotency — same key → skip
+  // Idempotency key prevents duplicate ERP writes.
   if (await alreadySynced(key)) return;
 
-  // rate limit — protect the ERP
+  // Rate-limit outbound ERP calls under webhook bursts.
   await waitForRateLimit();
 
-  // truth from vivenu — don't trust webhook money fields
+  // Load authoritative order state from the vivenu API; ignore monetary fields from the webhook body.
   const order = await fetchOrder(job.orderId);
   const { id, realPrice, currency, customer } = order || {};
 
