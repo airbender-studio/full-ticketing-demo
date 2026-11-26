@@ -192,36 +192,25 @@ async function purchaseWithPhoneTicket(page: Page) {
   console.log("[demo-e2e] === PURCHASE COMPLETE ===");
 }
 
-/** Mapping linger — ~4–5× pace (floor 4s). Readable, not endless. */
-function mappingLingerMs(mult = 4) {
-  return Math.max(4000, Math.floor(pace * mult));
-}
-
+/** Mapping beat — short glance, one smooth lower-third scroll (no mid jumps). */
 async function showMapping(page: Page, which: "harbor" | "bluebox") {
-  console.log(`[demo-e2e] mapping linger → ${which}`);
+  console.log(`[demo-e2e] mapping → ${which}`);
   await gotoLocal(page, `${BASE}/customers/${which}/mapping`);
   await expect(page.getByTestId("mapping-page")).toBeVisible({ timeout: 12_000 });
   await expect(page.getByRole("heading", { name: /Payload mapping/i })).toBeVisible();
-  await linger(page, mappingLingerMs(4));
+  await linger(page, Math.max(1200, pace * 1.2));
 
-  await page.getByTestId("mapping-flow").scrollIntoViewIfNeeded();
-  await linger(page, mappingLingerMs(3.5));
-
-  await page.getByTestId("mapping-recipe").scrollIntoViewIfNeeded();
-  await linger(page, mappingLingerMs(4));
-
+  // Expand JSON panels if collapsed — do not scrollIntoView (that jumps mid-page)
   for (const id of ["mapping-json-before", "mapping-json-after"] as const) {
     const body = page.getByTestId(`${id}-body`);
     if (!(await body.isVisible().catch(() => false))) {
       await page.getByTestId(`${id}-toggle`).click();
-      await beat(page, Math.max(400, pace));
+      await beat(page, Math.max(250, Math.floor(pace * 0.25)));
     }
-    await expect(page.getByTestId(`${id}-body`)).toBeVisible();
-    await page.getByTestId(id).scrollIntoViewIfNeeded();
-    await linger(page, mappingLingerMs(4.5));
   }
 
-  await scrollToLower(page, { lingerMs: mappingLingerMs(4) });
+  // One smooth scroll to lower third, brief linger — then leave
+  await scrollToLower(page, { lingerMs: Math.max(1400, pace * 1.4) });
 }
 
 test.describe.configure({ mode: "serial" });
