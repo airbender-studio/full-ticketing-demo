@@ -106,33 +106,66 @@ async function purchaseWithPhoneTicket(page: Page) {
   await linger(page, pace * 2.5);
 }
 
+/** Mapping is a showcase beat — never flash. ~5–8s+ floor per pause. */
+function mappingLingerMs(mult = 5) {
+  return Math.max(5500, Math.floor(pace * mult));
+}
+
+/** Slow step-scroll so the mapping page is readable, not a jump. */
+async function slowScrollMapping(page: Page) {
+  const steps = 6;
+  for (let i = 1; i <= steps; i++) {
+    await page.evaluate(
+      ({ i, steps }) => {
+        const max = Math.max(0, document.body.scrollHeight - window.innerHeight);
+        window.scrollTo({ top: (max * i) / steps, behavior: "smooth" });
+      },
+      { i, steps }
+    );
+    await beat(page, Math.max(900, Math.floor(pace * 0.9)));
+  }
+}
+
 async function showMapping(page: Page, which: "harbor" | "bluebox") {
+  console.log(`[demo-e2e] mapping linger → ${which}`);
   await gotoLocal(page, `${BASE}/customers/${which}/mapping`);
   await expect(page.getByTestId("mapping-page")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("heading", { name: /Payload mapping/i })).toBeVisible();
-  await linger(page, pace * 1.2);
+  // Hero / title — sit here so the recipe story lands
+  await linger(page, mappingLingerMs(5));
 
   await page.getByTestId("mapping-flow").scrollIntoViewIfNeeded();
-  await linger(page, pace);
+  await linger(page, mappingLingerMs(4.5));
 
   await page.getByTestId("mapping-recipe").scrollIntoViewIfNeeded();
-  await linger(page, pace * 1.2);
+  await linger(page, mappingLingerMs(5));
 
-  // Ensure JSON panels are expanded and readable
+  // Force JSON panels open and linger on before → after
   for (const id of ["mapping-json-before", "mapping-json-after"] as const) {
     const body = page.getByTestId(`${id}-body`);
     if (!(await body.isVisible().catch(() => false))) {
       await page.getByTestId(`${id}-toggle`).click();
+      await beat(page, Math.max(600, pace));
     }
     await expect(page.getByTestId(`${id}-body`)).toBeVisible();
     await page.getByTestId(id).scrollIntoViewIfNeeded();
-    await linger(page, pace * 1.4);
+    // Scroll inside the JSON pre a bit so the transform is obvious
+    await page.evaluate((tid) => {
+      const el = document.querySelector(`[data-testid="${tid}-body"]`);
+      if (el) el.scrollTop = 0;
+    }, id);
+    await linger(page, mappingLingerMs(5.5));
+    await page.evaluate((tid) => {
+      const el = document.querySelector(`[data-testid="${tid}-body"]`);
+      if (el) el.scrollTop = el.scrollHeight;
+    }, id);
+    await linger(page, mappingLingerMs(4));
   }
 
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  await linger(page, pace * 2);
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await linger(page, pace);
+  await slowScrollMapping(page);
+  await linger(page, mappingLingerMs(6));
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+  await linger(page, mappingLingerMs(4));
 }
 
 test.describe.configure({ mode: "serial" });

@@ -7,8 +7,8 @@ const slowMo = pace > 0 ? Math.min(220, Math.floor(pace * 0.2)) : 0;
 
 export default defineConfig({
   testDir: ".",
-  // Full walkthrough: 3 venues + camera tours + swagger + final linger
-  timeout: 600_000,
+  // Full walkthrough: ticket + long mapping lingers + 3 venues + swagger
+  timeout: 900_000,
   expect: { timeout: 20_000 },
   fullyParallel: false,
   retries: 0,
