@@ -44,16 +44,46 @@ async function linger(page: Page, ms = pace * 2) {
   await beat(page, ms);
 }
 
-/** Wait for Three.js map + demo camera helper, then orbit+tilt+zoom → home. */
-async function cameraTour(page: Page, durationMs = 3400) {
+/**
+ * Grab-style OrbitControls tour via __demoCameraTour:
+ * drag yaw+pitch to one side → zoom in → zoom out → reverse drag home.
+ */
+async function cameraTour(page: Page, durationMs = 5600) {
   await expect(page.getByTestId("seat-canvas")).toBeVisible({ timeout: 20_000 });
   await page.waitForFunction(() => typeof window.__demoCameraTour === "function", null, {
     timeout: 15_000,
   });
   await beat(page, Math.floor(pace * 0.5));
-  await page.evaluate(async (ms) => {
-    await window.__demoCameraTour?.({ durationMs: ms });
-  }, durationMs);
+  // Prefer real pointer grab on the canvas (OrbitControls), then fall back to helper.
+  const canvas = page.locator("[data-testid=seat-canvas] canvas").first();
+  const box = await canvas.boundingBox();
+  if (box) {
+    const cx = box.x + box.width * 0.5;
+    const cy = box.y + box.height * 0.45;
+    // 1) Grab-drag to one side while tilting (yaw + pitch together)
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    await page.mouse.move(cx + box.width * 0.28, cy + box.height * 0.16, { steps: 28 });
+    await beat(page, Math.max(400, Math.floor(pace * 0.4)));
+    await page.mouse.up();
+    await beat(page, Math.max(350, Math.floor(pace * 0.35)));
+    // 2) Zoom in · 3) Zoom out
+    await page.mouse.move(cx, cy);
+    await page.mouse.wheel(0, -420);
+    await beat(page, Math.max(500, Math.floor(pace * 0.5)));
+    await page.mouse.wheel(0, 420);
+    await beat(page, Math.max(400, Math.floor(pace * 0.4)));
+    // 4) Reverse drag home
+    await page.mouse.move(cx + box.width * 0.28, cy + box.height * 0.16);
+    await page.mouse.down();
+    await page.mouse.move(cx, cy, { steps: 28 });
+    await page.mouse.up();
+    await beat(page, Math.max(400, Math.floor(pace * 0.4)));
+  } else {
+    await page.evaluate(async (ms) => {
+      await window.__demoCameraTour?.({ durationMs: ms });
+    }, durationMs);
+  }
   await beat(page, Math.floor(pace * 0.4));
 }
 
@@ -64,9 +94,22 @@ async function openVenue(page: Page, slug: string, heading: RegExp) {
   await expect(page.getByTestId("quick-pick")).toBeVisible({ timeout: 15_000 });
 }
 
-async function switchClient(page: Page, label: RegExp) {
-  await page.getByTestId("client-switch").click();
-  await page.getByRole("option", { name: label }).click();
+/** Clients from seed/clients.ts — MenuItem value is slug; label is display name. */
+const CLIENTS = {
+  bluebox: { slug: "bluebox", name: /Bluebox Arts/i },
+  harbor: { slug: "harbor", name: /Harbor Live/i },
+} as const;
+
+async function switchClient(page: Page, which: keyof typeof CLIENTS) {
+  const { slug, name } = CLIENTS[which];
+  const select = page.getByTestId("client-switch");
+  await expect(select).toBeVisible();
+  await select.click();
+  // Prefer slug data-value — more stable than accessible name matching
+  const opt = page.locator(`li[data-value="${slug}"], [role="option"][data-value="${slug}"]`);
+  await expect(opt).toBeVisible({ timeout: 10_000 });
+  await opt.click();
+  await expect(page.getByTestId("brand-name")).toHaveText(name, { timeout: 15_000 });
 }
 
 /** Select seats → hold → checkout → phone ticket (must visibly succeed). */
@@ -204,8 +247,9 @@ test("paced visual walkthrough: seats → ticket → ERP → customers → swagg
   await expect(page.getByRole("link", { name: /View seat map/i })).toHaveCount(3);
   await linger(page, pace * 1.5);
 
-  await switchClient(page, /Bluebox Arts/i);
-  await expect(page.getByRole("link", { name: /Bluebox Arts/i }).first()).toBeVisible();
+  await switchClient(page, "bluebox");
+  await expect(page.getByTestId("brand-name")).toHaveText(/Bluebox Arts/i);
+  await expect(page.getByRole("heading", { level: 2 })).toContainText(/Bluebox Arts/i);
   await beat(page);
 
   // ── 2. Studio: brief map → seats → hold → checkout → phone ticket ──
@@ -243,7 +287,7 @@ test("paced visual walkthrough: seats → ticket → ERP → customers → swagg
   await linger(page, pace * 1.5);
 
   await page.getByTestId("customer-harbor").getByRole("button", { name: /Activate/i }).click();
-  await expect(page.getByRole("link", { name: /Harbor Live/i }).first()).toBeVisible();
+  await expect(page.getByTestId("brand-name")).toHaveText(/Harbor Live/i, { timeout: 15_000 });
   await linger(page, pace * 1.2);
 
   await page.getByTestId("customer-harbor").getByRole("link", { name: "Profile" }).click();
@@ -260,9 +304,9 @@ test("paced visual walkthrough: seats → ticket → ERP → customers → swagg
     .getByTestId("customer-bluebox")
     .getByRole("button", { name: /Activate|Active skin/i })
     .click();
-  await expect(page.getByRole("link", { name: /Bluebox Arts/i }).first()).toBeVisible();
+  await expect(page.getByTestId("brand-name")).toHaveText(/Bluebox Arts/i, { timeout: 15_000 });
   await page.getByTestId("customer-bluebox").getByRole("link", { name: "Profile" }).click();
-  await expect(page.getByRole("heading", { name: /Bluebox/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Bluebox Arts/i })).toBeVisible();
   await linger(page, pace);
 
   // ── 5. Remaining venues — camera tour (orbit + tilt + zoom) ─────
