@@ -304,6 +304,13 @@ export function layoutForSlug(slug: string): SeatLayout {
   return "grid";
 }
 
+declare global {
+  interface Window {
+    /** Playwright / showcase: orbit + dolly in/out, then restore start pose. */
+    __demoCameraTour?: (opts?: { durationMs?: number }) => Promise<void>;
+  }
+}
+
 export function SeatMap3D({
   seats,
   selected,
@@ -319,7 +326,7 @@ export function SeatMap3D({
       : Math.max(16, 12 + rows * 0.4 + cols * 0.1);
 
   return (
-    <div className="seat-canvas">
+    <div className="seat-canvas" data-testid="seat-canvas">
       <Canvas
         camera={{
           position:
@@ -362,11 +369,19 @@ export function SeatMap3D({
   );
 }
 
+function easeInOut(t: number) {
+  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+}
+
 /** Slow demo spin on curved houses; keep camera in front of the stage, never upside down. */
 function HouseControls({ layout }: { layout: SeatLayout }) {
   const ref = useRef<OrbitControlsImpl>(null);
   const stadium = layout === "theater" || layout === "oval";
   const [spin, setSpin] = useState(stadium);
+  const minAz = stadium ? -Math.PI * 0.42 : -Math.PI * 0.55;
+  const maxAz = stadium ? Math.PI * 0.42 : Math.PI * 0.55;
+  const minDist = layout === "grid" ? 9 : 14;
+  const maxDist = layout === "grid" ? 28 : 38;
 
   // Resume gentle spin a few seconds after the user stops dragging
   useEffect(() => {
@@ -387,6 +402,90 @@ function HouseControls({ layout }: { layout: SeatLayout }) {
     };
   }, [stadium]);
 
+  // Showcase helper: partial orbit, dolly in, dolly out, land on original pose.
+  useEffect(() => {
+    let cancel = false;
+    let raf = 0;
+
+    window.__demoCameraTour = (opts) =>
+      new Promise((resolve) => {
+        const ctrl = ref.current;
+        if (!ctrl) {
+          resolve();
+          return;
+        }
+
+        setSpin(false);
+        ctrl.autoRotate = false;
+        ctrl.enableDamping = false;
+
+        const startPos = ctrl.object.position.clone();
+        const startTarget = ctrl.target.clone();
+        const startAz = ctrl.getAzimuthalAngle();
+        const startPol = ctrl.getPolarAngle();
+        const startDist = ctrl.getDistance();
+        const azSwing = Math.min(0.55, (maxAz - minAz) * 0.45);
+        const peakAz = Math.max(minAz, Math.min(maxAz, startAz + azSwing));
+        const closeDist = Math.max(minDist + 0.2, startDist * 0.62);
+        const duration = Math.max(1800, opts?.durationMs ?? 3400);
+        const t0 = performance.now();
+        const offset = new THREE.Vector3();
+        const spherical = new THREE.Spherical();
+
+        const applySpherical = (az: number, pol: number, dist: number) => {
+          spherical.set(dist, pol, az);
+          offset.setFromSpherical(spherical);
+          ctrl.object.position.copy(startTarget).add(offset);
+          ctrl.target.copy(startTarget);
+          ctrl.update();
+        };
+
+        const frame = (now: number) => {
+          if (cancel) {
+            resolve();
+            return;
+          }
+          const u = Math.min(1, (now - t0) / duration);
+          // 0–0.45 orbit+zoom-in · 0.45–0.7 hold · 0.7–1 reverse to start
+          let az = startAz;
+          let dist = startDist;
+          if (u < 0.45) {
+            const p = easeInOut(u / 0.45);
+            az = startAz + (peakAz - startAz) * p;
+            dist = startDist + (closeDist - startDist) * p;
+          } else if (u < 0.7) {
+            az = peakAz;
+            dist = closeDist;
+          } else {
+            const p = easeInOut((u - 0.7) / 0.3);
+            az = peakAz + (startAz - peakAz) * p;
+            dist = closeDist + (startDist - closeDist) * p;
+          }
+
+          applySpherical(az, startPol, dist);
+
+          if (u < 1) {
+            raf = requestAnimationFrame(frame);
+          } else {
+            ctrl.object.position.copy(startPos);
+            ctrl.target.copy(startTarget);
+            ctrl.enableDamping = true;
+            ctrl.update();
+            if (stadium) setSpin(true);
+            resolve();
+          }
+        };
+
+        raf = requestAnimationFrame(frame);
+      });
+
+    return () => {
+      cancel = true;
+      cancelAnimationFrame(raf);
+      delete window.__demoCameraTour;
+    };
+  }, [layout, minAz, maxAz, minDist, maxDist, stadium]);
+
   return (
     <OrbitControls
       ref={ref}
@@ -402,10 +501,10 @@ function HouseControls({ layout }: { layout: SeatLayout }) {
       minPolarAngle={Math.PI * 0.18}
       maxPolarAngle={Math.PI * 0.48}
       // Stay in the house / don’t swing behind the stage
-      minAzimuthAngle={stadium ? -Math.PI * 0.42 : -Math.PI * 0.55}
-      maxAzimuthAngle={stadium ? Math.PI * 0.42 : Math.PI * 0.55}
-      minDistance={layout === "grid" ? 9 : 14}
-      maxDistance={layout === "grid" ? 28 : 38}
+      minAzimuthAngle={minAz}
+      maxAzimuthAngle={maxAz}
+      minDistance={minDist}
+      maxDistance={maxDist}
       autoRotate={spin}
       autoRotateSpeed={layout === "oval" ? 0.55 : layout === "theater" ? 0.4 : 0}
     />
