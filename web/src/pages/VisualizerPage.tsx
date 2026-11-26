@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Box,
   Button,
@@ -28,6 +28,23 @@ const levelColor: Record<string, "default" | "success" | "warning" | "error" | "
   error: "error",
 };
 
+declare global {
+  interface Window {
+    /** Playwright: move all sliders together to peaks, then restore start values. */
+    __demoSliderTour?: (opts?: { durationMs?: number }) => Promise<void>;
+  }
+}
+
+function easeInOut(t: number) {
+  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+}
+
+function clamp(n: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+type SliderKeys = "rateLimitPerMinute" | "erpFailPercent" | "holdSeconds" | "holdWarnSeconds";
+
 export function VisualizerPage() {
   const [logs, setLogs] = useState<Log[]>([]);
   const [toggles, setToggles] = useState<Toggles | null>(null);
@@ -38,8 +55,13 @@ export function VisualizerPage() {
     queued: number;
     erpQueueDepth: number;
   } | null>(null);
+  const togglesRef = useRef<Toggles | null>(null);
 
   const refreshStats = () => api.stats().then(setStats).catch(console.error);
+
+  useEffect(() => {
+    togglesRef.current = toggles;
+  }, [toggles]);
 
   useEffect(() => {
     api.toggles().then(setToggles).catch(console.error);
@@ -63,6 +85,117 @@ export function VisualizerPage() {
     const next = await api.patchToggles(p);
     setToggles(next);
   };
+
+  // Choreographed multi-slider tour: all move at once → different peaks → home.
+  useEffect(() => {
+    let cancel = false;
+    let raf = 0;
+
+    window.__demoSliderTour = (opts) =>
+      new Promise((resolve) => {
+        const start = togglesRef.current;
+        if (!start) {
+          resolve();
+          return;
+        }
+
+        const startVals: Record<SliderKeys, number> = {
+          rateLimitPerMinute: start.rateLimitPerMinute,
+          erpFailPercent: start.erpFailPercent,
+          holdSeconds: start.holdSeconds,
+          holdWarnSeconds: start.holdWarnSeconds,
+        };
+
+        // Each slider goes somewhere different (and visible)
+        const peakVals: Record<SliderKeys, number> = {
+          rateLimitPerMinute: clamp(Math.round(start.rateLimitPerMinute * 0.35), 8, 40),
+          erpFailPercent: clamp(start.erpFailPercent + 45, 25, 70),
+          holdSeconds: clamp(start.holdSeconds + 70, 90, 160),
+          holdWarnSeconds: clamp(Math.round(start.holdWarnSeconds * 0.45), 8, 20),
+        };
+
+        const duration = Math.max(1600, opts?.durationMs ?? 2400);
+        const holdMs = 500;
+        const t0 = performance.now();
+
+        const applyLocal = (u: number, from: Record<SliderKeys, number>, to: Record<SliderKeys, number>) => {
+          const p = easeInOut(u);
+          setToggles((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              rateLimitPerMinute: Math.round(from.rateLimitPerMinute + (to.rateLimitPerMinute - from.rateLimitPerMinute) * p),
+              erpFailPercent: Math.round(from.erpFailPercent + (to.erpFailPercent - from.erpFailPercent) * p),
+              holdSeconds: Math.round(from.holdSeconds + (to.holdSeconds - from.holdSeconds) * p),
+              holdWarnSeconds: Math.round(
+                from.holdWarnSeconds + (to.holdWarnSeconds - from.holdWarnSeconds) * p
+              ),
+            };
+          });
+        };
+
+        const phaseOut = (now: number) => {
+          if (cancel) {
+            resolve();
+            return;
+          }
+          const u = Math.min(1, (now - t0) / duration);
+          applyLocal(u, startVals, peakVals);
+          if (u < 1) {
+            raf = requestAnimationFrame(phaseOut);
+          } else {
+            // Brief hold at peaks, then commit peak to API once
+            void api
+              .patchToggles(peakVals)
+              .then((next) => {
+                if (!cancel) setToggles(next);
+              })
+              .catch(() => undefined);
+
+            const t1 = performance.now() + holdMs;
+            const waitHold = (n: number) => {
+              if (cancel) {
+                resolve();
+                return;
+              }
+              if (n < t1) {
+                raf = requestAnimationFrame(waitHold);
+                return;
+              }
+              const tReturn = performance.now();
+              const phaseBack = (n2: number) => {
+                if (cancel) {
+                  resolve();
+                  return;
+                }
+                const u2 = Math.min(1, (n2 - tReturn) / duration);
+                applyLocal(u2, peakVals, startVals);
+                if (u2 < 1) {
+                  raf = requestAnimationFrame(phaseBack);
+                } else {
+                  void api
+                    .patchToggles(startVals)
+                    .then((next) => {
+                      if (!cancel) setToggles(next);
+                    })
+                    .finally(() => resolve());
+                }
+              };
+              raf = requestAnimationFrame(phaseBack);
+            };
+            raf = requestAnimationFrame(waitHold);
+          }
+        };
+
+        raf = requestAnimationFrame(phaseOut);
+      });
+
+    return () => {
+      cancel = true;
+      cancelAnimationFrame(raf);
+      delete window.__demoSliderTour;
+    };
+  }, []);
 
   return (
     <Stack spacing={3}>
@@ -136,6 +269,7 @@ export function VisualizerPage() {
                 Rate limit / min: {toggles.rateLimitPerMinute}
               </Typography>
               <Slider
+                data-testid="slider-rate-limit"
                 min={5}
                 max={120}
                 value={toggles.rateLimitPerMinute}
@@ -146,6 +280,7 @@ export function VisualizerPage() {
                 ERP fail chaos: {toggles.erpFailPercent}%
               </Typography>
               <Slider
+                data-testid="slider-erp-chaos"
                 min={0}
                 max={80}
                 value={toggles.erpFailPercent}
@@ -156,6 +291,7 @@ export function VisualizerPage() {
                 Seat lock window: {toggles.holdSeconds}s
               </Typography>
               <Slider
+                data-testid="slider-hold-seconds"
                 min={15}
                 max={180}
                 value={toggles.holdSeconds}
@@ -166,6 +302,7 @@ export function VisualizerPage() {
                 Warn popup at: {toggles.holdWarnSeconds}s left
               </Typography>
               <Slider
+                data-testid="slider-hold-warn"
                 min={5}
                 max={Math.max(10, toggles.holdSeconds - 5)}
                 value={toggles.holdWarnSeconds}

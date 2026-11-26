@@ -82,50 +82,24 @@ async function activateClientApi(page: Page, slug: "bluebox" | "harbor") {
   console.log(`[demo-e2e] activated ${slug} via API`);
 }
 
-/** Drag an MUI Slider thumb visibly left/right, then linger. */
-async function dragSlider(page: Page, testId: string, dx: number) {
-  const root = page.getByTestId(testId);
-  await expect(root).toBeVisible({ timeout: 8_000 });
-  await root.scrollIntoViewIfNeeded();
-  const thumb = root.locator(".MuiSlider-thumb, [role='slider']").first();
-  const box = await thumb.boundingBox();
-  if (!box) {
-    // Fallback: click along the rail
-    const rail = root.locator(".MuiSlider-rail, .MuiSlider-track").first();
-    const r = await rail.boundingBox();
-    if (!r) return;
-    await page.mouse.click(r.x + r.width * (dx > 0 ? 0.75 : 0.25), r.y + r.height / 2);
-    await linger(page, Math.max(900, pace));
-    return;
-  }
-  const x = box.x + box.width / 2;
-  const y = box.y + box.height / 2;
-  await page.mouse.move(x, y);
-  await page.mouse.down();
-  await page.mouse.move(x + dx, y, { steps: 18 });
-  await page.mouse.up();
-  await linger(page, Math.max(1000, pace));
-}
-
-/** Play the visualizer toggles/sliders so rate-limit / chaos / hold feel alive. */
+/**
+ * Choreographed slider tour: ALL sliders move together to different peaks,
+ * then all return to their starting values (seamless — not one-at-a-time).
+ */
 async function playVisualizerSliders(page: Page) {
-  console.log("[demo-e2e] visualizer slider play");
+  console.log("[demo-e2e] visualizer slider choreography (all together → home)");
   await page.getByText("Integration toggles").scrollIntoViewIfNeeded();
-  await linger(page, pace);
+  await expect(page.getByTestId("slider-rate-limit")).toBeVisible({ timeout: 8_000 });
+  await linger(page, Math.max(600, pace * 0.6));
 
-  // Nudge rate limit down, then up
-  await dragSlider(page, "slider-rate-limit", -90);
-  await dragSlider(page, "slider-rate-limit", 110);
-
-  // Bump ERP chaos up a bit (retry story), then ease back
-  await dragSlider(page, "slider-erp-chaos", 70);
+  await page.waitForFunction(() => typeof window.__demoSliderTour === "function", null, {
+    timeout: 10_000,
+  });
+  // ~2.4s out + hold + ~2.4s back
+  await page.evaluate(async () => {
+    await window.__demoSliderTour?.({ durationMs: 2400 });
+  });
   await linger(page, Math.max(1200, pace * 1.2));
-  await dragSlider(page, "slider-erp-chaos", -50);
-
-  // Seat lock window + warn threshold
-  await dragSlider(page, "slider-hold-seconds", 80);
-  await dragSlider(page, "slider-hold-warn", -40);
-  await linger(page, Math.max(1400, pace * 1.3));
 }
 
 /**
